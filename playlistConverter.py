@@ -5,6 +5,7 @@ from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from bs4 import BeautifulSoup
 from tqdm import tqdm
+import copy
 
 class PlaylistConverter:
 
@@ -17,12 +18,13 @@ class PlaylistConverter:
             self.playlist = playlist
         self.matches = []
 
-    def run2(self):
+    def run(self):
         uris = []
         skipped = []
-        for entry in tqdm(self.playlist):
-            entry_c = self.cleanEntry(entry)
-            match = self.match_logic2(entry_c)
+        for entry in self.playlist:
+            # entry_c = self.cleanEntry(entry.copy())
+            entry_c = copy.deepcopy(entry)
+            match = self.match_logic(entry_c)
             if match != None:
                 self.matches.append([entry, match])
                 uri = match['uri']
@@ -32,25 +34,14 @@ class PlaylistConverter:
         
         return uris, skipped
 
-    def run(self):
-        uris = []
-        skipped = []
-        for entry in self.playlist:
-            uri = self.matchingLogic(entry)
-            if uri != None:
-                uris.append(uri)
-            else:
-                skipped.append(entry)
-        return uris, skipped
-
     @staticmethod
     def search(song='', artist='', album='', token='', search_type='track'):
         baseURL = "https://api.spotify.com/v1/search"
 
         # convert space to %20
-        song = song.replace(" ", "%20").replace("&", "and")
-        artist = artist.replace(" ", "%20").replace("&", "and")
-        album = album.replace(" ", "%20").replace("&", "and")
+        song = song.replace(" ", "%20").replace("&", "")
+        artist = artist.replace(" ", "%20").replace("&", "")
+        album = album.replace(" ", "%20").replace("&", "")
 
         query = 'q='
         if song != '':
@@ -61,6 +52,8 @@ class PlaylistConverter:
             query += f"%20album:{album}"
         
         query += f"&type={search_type}"
+        if "hiding" in song.lower():
+            print(f"############## {query}")
 
         response = requests.get(url=f"{baseURL}?{query}", headers={"Content-Type":"application/json", 
                         "Authorization":f"Bearer {token}"})
@@ -79,8 +72,7 @@ class PlaylistConverter:
 
         return j
     
-    @staticmethod
-    def spotify_search_to_playlist(search_response):
+    def spotify_search_to_playlist(self, search_response):
         '''
         Makes the search response use the same structure as the self.playlist dictionary
         for ease
@@ -112,6 +104,7 @@ class PlaylistConverter:
             if similarity > highest_similarity:
                 highest_similarity = similarity
                 matched_entry = search_playlist[i]
+                matched_entry['similarity'] = similarity
         
         return matched_entry
 
@@ -121,7 +114,7 @@ class PlaylistConverter:
         # print(f"cf {entry1} : {entry2}")
         l1 = []
         l2 = []
-        rvector = set(entry1) #.union(set(entry2)) 
+        rvector = set(entry1).union(set(entry2)) 
         for w in rvector:
             if w in entry1: l1.append(1) # create a vector
             else: l1.append(0)
@@ -140,163 +133,88 @@ class PlaylistConverter:
 
         return cosine
 
-    def match2(self, entry, search_entry):
+    def match(self, entry, search_entry):
         '''
         Search with search_entry (search entry might be modified for a better search)
         Match to real entry
         '''
-        artists_str = ",".join(search_entry['artist'])
+        artists_str = " ".join(search_entry['artist'])
         resp = self.search(song=search_entry['song'], artist=artists_str, album=search_entry['album'], token=self.token)
 
         if len(resp['tracks']['items']) <= 0:
             return None
 
         search_playlist = self.spotify_search_to_playlist(resp)
+        search_playlist = [self.cleanEntry(e) for e in search_playlist]
+        # search_playlist['artist'] = [re.sub('\(\)\[\]', '', e) for e in search_playlist['artist']]
         match = self.bag_matching(entry, search_playlist)
         return match
 
-    def match_logic2(self, entry):
+    def match_logic(self, entry):
         '''modify entries to return a search'''
-        entry_mod = entry.copy()
+        entry_mod = copy.deepcopy(entry)
+        entry_mod['album'] = ""
+        matches = []
 
-        entry_mod['album'] = ''
-
+        entry_mod = self.addArtists(entry_mod)
+        print(entry_mod)
         # default
-        r = self.match2(entry, entry_mod)
+        r = self.match(entry, entry_mod)
         if r != None:
-            return r
+            matches.append(r)
         
-        # replace & with ,
-        print(f"Searching for {entry} without &...")
-        entry_mod['artist'] = [e.replace("&", ",") for e in entry_mod['artist']]
-        r = self.match2(entry, entry_mod)
+        # clean
+        entry_mod = self.cleanEntry(entry_mod)
+        print("[Clean] " + str(entry_mod))
+        r = self.match(entry, entry_mod)
         if r != None:
-            return r
+            matches.append(r)
+
+        # replace & with ,
+        # print(f"Searching for {entry} without &...")
+        entry_mod['artist'] = [e.replace("&", ", ") for e in entry_mod['artist']]
+        print("[rm &] " + str(entry_mod))
+        r = self.match(entry, entry_mod)
+        if r != None:
+            matches.append(r)
         
         # remove weird symbols
-        print(f"Searching for {entry} without symbols...")
+        # print(f"Searching for {entry} with only alphanumerics...")
         entry_mod['artist'] = [re.sub('[^0-9a-zA-Z ]+', '', e) for e in entry_mod['artist']]
-        r = self.match2(entry, entry_mod)
+        print("[alp-num] " + str(entry_mod))
+        r = self.match(entry, entry_mod)
+        if r != None:
+            matches.append(r)
+
+        best_sim = 0
+        best_match = None
+        for m in matches:
+            if m['similarity'] > best_sim:
+                best_sim = m['similarity']
+                best_match = m
+
+        return best_match
+
+        '''
+        # use album and song name
+        print(f"Searching for {entry} without artist & with album...")
+        entry['album'] = album
+        entry['artist'] = []
+        r = self.match(entry)
         if r != None:
             return r
 
         # use song name only
         print(f"Searching for {entry} with just song name...")
         entry_mod['album'] = ''
-        r = self.match2(entry, entry_mod)
+        r = self.match(entry, entry_mod)
         if r != None:
             return r
         '''
-        # use album and song name
-        print(f"Searching for {entry} without artist & with album...")
-        entry['album'] = album
-        entry['artist'] = []
-        r = self.match2(entry)
-        if r != None:
-            return r
 
-        '''
-
-    
     @staticmethod
-    def matchTrackSearch(search_response, song_apple='', artists_apple=[], album_apple='', auto_match=True, token=''):
-        '''
-        Take a bunch of tracks from a spotify query and try to match it 
-        '''
-        # lowercase for ease of match
-        song_apple = song_apple.lower()
-        artists_apple = [artist.lower() for artist in artists_apple]
-        album_apple = album_apple.lower()
-
-        uri = None
-        for item in search_response['tracks']['items']:
-            song_spotify = item['name'].lower()
-            artists_spotify = [artist['name'].lower() for artist in item['artists']]
-            album_spotify = item['album']['name'].lower()
-
-            # print(f"Item: {song_spotify} by {artists_spotify} on album_spotify")
-            if auto_match:
-                # auto match if no conditionals are given
-                match = True 
-
-            # create conditional
-            if song_apple != '':
-                match = song_spotify == song_apple
-            if len(artists_apple) != 0:
-                # check that every apple artist is in the spotify artists
-                for artist_a in artists_apple:
-                    print(f"{artist_a} -> {artists_spotify}")
-                    match = match and artist_a in artists_spotify
-            if album_apple != '':
-                match = match and album_spotify == album_apple
-            
-            if match:
-                msg = "Match found!\n"
-                if song_apple != '':
-                    msg += f"\t{song_spotify} == {song_apple}\n"
-                if artists_apple != '':
-                    msg += f"\t{artists_spotify} == {artists_apple}\n"
-                if album_apple != '':
-                    msg += f"\t{album_spotify} == {album_apple}\n"
-
-                print(msg)
-                uri = item['uri']
-                break
-
-        return uri
-
-    def matchingLogic(self, entry):
-        '''
-        1. Search by song and artist
-        2. Search by song and artist after cleaning the entry
-        3. search by song and first artist first name
-        '''
-        entry = self.addArtists(entry)
-
-        uri = self.match(entry['song'], entry['artist'], entry['album'])
-        if uri != None:
-            return uri
-
-        # clean song name, artists, etc 
-        entry = self.cleanEntry(entry)
-
-        uri = self.match(entry['song'], entry['artist'], entry['album'])
-        if uri != None:
-            return uri
-
-        artists_fname = [artist.split(" ") for artist in entry['artist']]
-        print(f"Firstname = {artists_fname}")
-        uri = self.match(entry['song'], artists_fname, entry['album'])
-        if uri != None:
-            return uri
-        
-        print(f"Failed to find URI for {entry['song']} by {entry['artist']} on {entry['album']}")
-        return None
-
-    def match(self, song, artists, album):
-        '''
-        1. Try to match song and multiple artists 
-        2. Try to match song with one artist
-        '''
-        # first search by song and artist
-        for artist in artists:
-            resp = self.search(song=song, artist=artist, token=self.token)
-
-            if len(resp['tracks']['items']) > 0:
-                uri = self.matchTrackSearch(resp, song_apple=song, artists_apple=artists, auto_match=False, token=self.token)
-
-                if uri != None:
-                    return uri
-
-                # match one artist
-                for artist in artists:
-                    uri = self.matchTrackSearch(resp, song_apple=song, artists_apple=[artist], auto_match=False, token=self.token)
-                    if uri != None:
-                        return uri
-
-        return None
-
-    def addArtists(self, entry):
+    def addArtists(entry_og):
+        entry = copy.deepcopy(entry_og)
         paren_pattern = r"\(([^)]+)"
         parens = re.findall(paren_pattern, entry['song'])
 
@@ -320,21 +238,22 @@ class PlaylistConverter:
 
         return entry
 
-    def cleanEntry(self, entry):
+    def cleanEntry(self, entry_og):
         '''
         Remove anything between []
         Remove anything between ()
         '''
+        entry = copy.deepcopy(entry_og)
         paren_pattern = " ?\([^)]+\)"
         bracket_pattern = " ?\[[^)]+\]"
         for key in entry.keys():
             if key == 'artist':
                 for i in range(len(entry[key])):
-                    entry[key][i] = re.sub(paren_pattern, "", entry['artist'][i])
-                    entry[key][i] = re.sub(bracket_pattern, "", entry['artist'][i])
+                    entry[key][i] = re.sub(paren_pattern, "", entry[key][i])
+                    entry[key][i] = re.sub(bracket_pattern, "", entry[key][i])
             else:
-                entry[key] = re.sub(paren_pattern, "", entry['song'])
-                entry[key] = re.sub(bracket_pattern, "", entry['song'])
+                entry[key] = re.sub(paren_pattern, "", entry[key])
+                entry[key] = re.sub(bracket_pattern, "", entry[key])
 
         return entry
 
@@ -363,6 +282,9 @@ class PlaylistConverter:
             playlist.append(entry)
         
         return playlist
+    
+    # def upload_to_spotify(self, playlist):
+
     
 
 if __name__ == "__main__":
