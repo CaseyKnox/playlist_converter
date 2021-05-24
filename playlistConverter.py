@@ -21,7 +21,7 @@ class PlaylistConverter:
     def run(self):
         uris = []
         skipped = []
-        for entry in self.playlist:
+        for entry in tqdm(self.playlist):
             # entry_c = self.cleanEntry(entry.copy())
             entry_c = copy.deepcopy(entry)
             match = self.match_logic(entry_c)
@@ -52,8 +52,6 @@ class PlaylistConverter:
             query += f"%20album:{album}"
         
         query += f"&type={search_type}"
-        if "hiding" in song.lower():
-            print(f"############## {query}")
 
         response = requests.get(url=f"{baseURL}?{query}", headers={"Content-Type":"application/json", 
                         "Authorization":f"Bearer {token}"})
@@ -157,7 +155,7 @@ class PlaylistConverter:
         matches = []
 
         entry_mod = self.addArtists(entry_mod)
-        print(entry_mod)
+        # print(entry_mod)
         # default
         r = self.match(entry, entry_mod)
         if r != None:
@@ -165,7 +163,7 @@ class PlaylistConverter:
         
         # clean
         entry_mod = self.cleanEntry(entry_mod)
-        print("[Clean] " + str(entry_mod))
+        # print("[Clean] " + str(entry_mod))
         r = self.match(entry, entry_mod)
         if r != None:
             matches.append(r)
@@ -173,7 +171,7 @@ class PlaylistConverter:
         # replace & with ,
         # print(f"Searching for {entry} without &...")
         entry_mod['artist'] = [e.replace("&", ", ") for e in entry_mod['artist']]
-        print("[rm &] " + str(entry_mod))
+        # print("[rm &] " + str(entry_mod))
         r = self.match(entry, entry_mod)
         if r != None:
             matches.append(r)
@@ -181,7 +179,7 @@ class PlaylistConverter:
         # remove weird symbols
         # print(f"Searching for {entry} with only alphanumerics...")
         entry_mod['artist'] = [re.sub('[^0-9a-zA-Z ]+', '', e) for e in entry_mod['artist']]
-        print("[alp-num] " + str(entry_mod))
+        # print("[alp-num] " + str(entry_mod))
         r = self.match(entry, entry_mod)
         if r != None:
             matches.append(r)
