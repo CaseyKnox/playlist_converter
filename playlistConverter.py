@@ -6,6 +6,7 @@ from selenium.webdriver.common.keys import Keys
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 import copy
+import json
 
 class PlaylistConverter:
 
@@ -281,7 +282,52 @@ class PlaylistConverter:
         
         return playlist
     
-    # def upload_to_spotify(self, playlist):
+    @staticmethod
+    def create_playlist(uid, playlist_name, desc='', public=False, token=''):
+        endpoint_url = f"https://api.spotify.com/v1/users/{uid}/playlists"
+        request_body = json.dumps({
+                "name": playlist_name,
+                "description": desc,
+                "public": public
+                })
+        response = requests.post(url = endpoint_url, data = request_body, headers={"Content-Type":"application/json", 
+                                "Authorization":f"Bearer {token}"})
+        j = response.json()
+
+        if int(response.status_code) != 201:
+            print(f"Error code: {response.status_code}")
+            print(f"{response}")
+            raise Exception(response.status_code)
+
+        return j
+
+    @staticmethod
+    def upload_to_spotify(playlist_id, uris, token=''):
+        endpoint_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
+
+        # upload in batches of 100
+        for i in range(0, len(uris), 100):
+            request_body = json.dumps({
+                    "uris" : uris[i:i+100]
+                    })
+            response = requests.post(url=endpoint_url, data=request_body, headers={"Content-Type":"application/json", 
+                                    "Authorization":f"Bearer {token}"})
+            j = response.json()
+
+            if int(response.status_code) != 201:
+                print(f"Error code: {response.status_code}")
+                print(f"{response}")
+                raise Exception(response.status_code)
+
+    def printAssumedMatches(self):
+        '''
+        Print the matches where the song titles do not match exactly
+        '''
+        for m in self.matches:
+            if m[0]['song'].lower() != m[1]['song'].lower():
+                # 0 is requested, 1 is the found match
+                print(f"Requested              ------------------->            Assumed Match")
+                print(f"{m[0]['song']} by {m[0]['artist']} --> {m[1]['song']} by {m[1]['artist']}")
 
     
 
